@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Trash2, BookOpen } from 'lucide-react';
 import MarksManagement from './MarksManagement';
+import { supabase } from '../lib/supabase';
 
 interface TeacherData {
   name: string;
@@ -43,13 +44,22 @@ const TeacherDashboard: React.FC = () => {
   const [studentsCount, setStudentsCount] = useState<number | null>(null);
   const [teacherMap, setTeacherMap] = useState<Record<string,string>>({});
 
-  useEffect(() => {
+  const loadHomeworks = async () => {
     try {
-      const raw = localStorage.getItem('homeworks');
-      if (!raw) return;
-      const list = JSON.parse(raw);
-      if (Array.isArray(list)) setHomeworks(list);
-    } catch (e) {}
+      const { data } = await supabase
+        .from('homework')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(20);
+
+      if (data) setHomeworks(data);
+    } catch (e) {
+      console.error('Error loading homeworks:', e);
+    }
+  };
+
+  useEffect(() => {
+    loadHomeworks();
   }, []);
 
   // load teacher profile from public/data/teachers.json when available (use teacher.teacherId or loggedUser)
@@ -119,7 +129,7 @@ const TeacherDashboard: React.FC = () => {
     })();
   }, [teacher]);
 
-  const handleAssign = (e: React.FormEvent) => {
+  const handleAssign = async (e: React.FormEvent) => {
     e.preventDefault();
     setMessage('');
     if (!title.trim()) {
@@ -135,43 +145,58 @@ const TeacherDashboard: React.FC = () => {
       setMessage(`You cannot assign homework to section ${section}.`);
       return;
     }
-    const hw = {
-      id: Date.now(),
-      className: String(className).trim(),
-      section: String(section).trim(),
-      title: title.trim(),
-  subject: subject || (profile?.subjects && profile.subjects[0]) || '',
-      description: description.trim(),
-  submissionDate: submissionDate || null,
-  createdBy: profile?.name || teacher?.name || profile?.teacherId || teacher?.teacherId || 'unknown',
-      ts: Date.now(),
-    };
+
     try {
-      const raw = localStorage.getItem('homeworks');
-      const list = raw ? JSON.parse(raw) : [];
-      list.unshift(hw);
-      localStorage.setItem('homeworks', JSON.stringify(list));
-      setHomeworks(list);
-      setMessage('Homework assigned. Students in the class will see it.');
+      // Get teacher from teachers table
+      const { data: teacherData } = await supabase
+        .from('teachers')
+        .select('id, name')
+        .eq('teacher_id', profile?.teacherId || teacher?.teacherId)
+        .maybeSingle();
+
+      const hw = {
+        title: title.trim(),
+        description: description.trim(),
+        subject: subject || (profile?.subjects && profile.subjects[0]) || '',
+        class_name: String(className).trim(),
+        section: String(section).trim(),
+        submission_date: submissionDate || null,
+        created_by: teacherData?.id || null,
+        teacher_name: teacherData?.name || profile?.name || teacher?.name || 'Teacher',
+        status: 'active'
+      };
+
+      const { error } = await supabase.from('homework').insert(hw);
+
+      if (error) {
+        setMessage(`Error: ${error.message}`);
+        return;
+      }
+
+      setMessage('Homework assigned successfully! Students in the class will see it.');
       setTitle('');
       setDescription('');
-  setSubmissionDate('');
-    } catch (e) {
-      setMessage('Could not save homework.');
+      setSubmissionDate('');
+      loadHomeworks();
+    } catch (e: any) {
+      setMessage(`Could not save homework: ${e.message}`);
     }
   };
 
-  const handleDelete = (id: number) => {
+  const handleDelete = async (id: string) => {
     if (!window.confirm('Delete this homework?')) return;
     try {
-      const raw = localStorage.getItem('homeworks');
-      const list = raw ? JSON.parse(raw) : [];
-      const next = list.filter((h: any) => h.id !== id);
-      localStorage.setItem('homeworks', JSON.stringify(next));
-      setHomeworks(next);
-      setMessage('Homework deleted.');
-    } catch (e) {
-      setMessage('Could not delete homework.');
+      const { error } = await supabase.from('homework').delete().eq('id', id);
+
+      if (error) {
+        setMessage(`Error deleting homework: ${error.message}`);
+        return;
+      }
+
+      setMessage('Homework deleted successfully.');
+      loadHomeworks();
+    } catch (e: any) {
+      setMessage(`Could not delete homework: ${e.message}`);
     }
   };
 
@@ -211,77 +236,83 @@ const TeacherDashboard: React.FC = () => {
   }
 
   return (
-    <div className="flex items-center justify-center bg-gradient-to-br from-blue-50 to-white min-h-screen px-4 py-8">
-      <div className="max-w-4xl w-full bg-white rounded-xl shadow-2xl border overflow-hidden">
-        <div className="p-4 border-b bg-gray-50">
-          <div className="flex space-x-4">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-cyan-50 py-8">
+      <div className="max-w-6xl mx-auto px-4">
+      <div className="bg-white rounded-3xl shadow-2xl border overflow-hidden">
+        <div className="p-6 border-b bg-gradient-to-r from-blue-50 to-cyan-50">
+          <div className="flex space-x-3">
             <button
               onClick={() => setActiveTab('homework')}
-              className={`px-4 py-2 rounded-lg ${
+              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all shadow-sm ${
                 activeTab === 'homework'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  ? 'bg-blue-500 text-white shadow-lg transform scale-105'
+                  : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
               }`}
             >
-              <div className="flex items-center space-x-2">
-                <Trash2 size={20} />
-                <span>Homework</span>
-              </div>
+              <BookOpen size={20} />
+              <span>Homework</span>
             </button>
             <button
               onClick={() => setActiveTab('marks')}
-              className={`px-4 py-2 rounded-lg ${
+              className={`flex items-center gap-2 px-6 py-3 rounded-xl font-medium transition-all shadow-sm ${
                 activeTab === 'marks'
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  ? 'bg-blue-500 text-white shadow-lg transform scale-105'
+                  : 'bg-white text-gray-700 hover:bg-gray-50 hover:shadow-md'
               }`}
             >
-              <div className="flex items-center space-x-2">
-                <BookOpen size={20} />
-                <span>Marks Management</span>
-              </div>
+              <BookOpen size={20} />
+              <span>Marks Management</span>
             </button>
           </div>
         </div>
-        <div className="p-6 flex items-center gap-6">
-          <img src={profile?.profilePhoto || teacher.profilePhoto} alt="teacher" className="w-24 h-28 object-cover rounded-md border-2 border-sky-200" />
-          <div>
-            <h2 className="text-2xl font-bold text-sky-700">{profile?.name || teacher.name}</h2>
-            <div className="text-sm text-gray-600 mt-1">Teacher ID: <span className="font-semibold">{profile?.teacherId || teacher.teacherId}</span></div>
-            <div className="mt-2 text-sm text-gray-700">
-              <div>
-                <span className="text-gray-500">Classes:</span>{' '}
-                <span className="font-medium">{(profile?.classes && profile.classes.length > 0) ? profile.classes.join(', ') : (teacher?.classes ? teacher.classes.join(', ') : '—')}</span>
-              </div>
-              <div className="mt-1">
-                <span className="text-gray-500">Sections:</span>{' '}
-                <span className="font-medium">{(profile?.sections && profile.sections.length > 0) ? profile.sections.join(', ') : (teacher?.sections ? teacher.sections.join(', ') : '—')}</span>
-              </div>
-              <div className="mt-2">
-                <span className="text-gray-500">Subjects:</span>{' '}
-                <span className="font-medium">{(profile?.subjects && profile.subjects.length > 0) ? profile.subjects.join(', ') : '—'}</span>
+        <div className="p-8 bg-gradient-to-r from-blue-500 to-cyan-500">
+          <div className="flex items-center gap-6">
+            <div className="relative">
+              <img src={profile?.profilePhoto || teacher.profilePhoto} alt="teacher" className="w-28 h-32 object-cover rounded-2xl border-4 border-white shadow-xl" />
+              <div className="absolute -top-2 -right-2 w-8 h-8 bg-green-500 rounded-full border-4 border-white"></div>
+            </div>
+            <div className="flex-1 text-white">
+              <h2 className="text-3xl font-bold mb-2">{profile?.name || teacher.name}</h2>
+              <div className="text-sm opacity-90 mb-3">Teacher ID: <span className="font-semibold">{profile?.teacherId || teacher.teacherId}</span></div>
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 text-center">
+                  <div className="text-xs opacity-90 mb-1">Classes</div>
+                  <div className="text-2xl font-bold">{profile?.classes ? profile.classes.length : '—'}</div>
+                </div>
+                <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 text-center">
+                  <div className="text-xs opacity-90 mb-1">Students</div>
+                  <div className="text-2xl font-bold">{studentsCount ?? '—'}</div>
+                </div>
+                <div className="bg-white/20 backdrop-blur-sm rounded-xl p-3 text-center">
+                  <div className="text-xs opacity-90 mb-1">Homeworks</div>
+                  <div className="text-2xl font-bold">{homeworks.length}</div>
+                </div>
               </div>
             </div>
-            <div className="mt-4 grid grid-cols-3 gap-4">
-              <div className="p-3 bg-sky-50 rounded-lg text-center">
-                <div className="text-xs text-gray-500">Classes</div>
-                <div className="text-lg font-bold text-gray-800">{profile?.classes ? profile.classes.length : '—'}</div>
-              </div>
-              <div className="p-3 bg-sky-50 rounded-lg text-center">
-                <div className="text-xs text-gray-500">Students</div>
-                <div className="text-lg font-bold text-gray-800">{studentsCount ?? '—'}</div>
-              </div>
-              <div className="p-3 bg-sky-50 rounded-lg text-center">
-                <div className="text-xs text-gray-500">Attendance</div>
-                <div className="text-lg font-bold text-green-600">95%</div>
-              </div>
+          </div>
+          <div className="mt-6 grid grid-cols-3 gap-4 text-white">
+            <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
+              <div className="text-xs opacity-75">Classes</div>
+              <div className="text-sm font-medium mt-1">{(profile?.classes && profile.classes.length > 0) ? profile.classes.join(', ') : (teacher?.classes ? teacher.classes.join(', ') : '—')}</div>
+            </div>
+            <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
+              <div className="text-xs opacity-75">Sections</div>
+              <div className="text-sm font-medium mt-1">{(profile?.sections && profile.sections.length > 0) ? profile.sections.join(', ') : (teacher?.sections ? teacher.sections.join(', ') : '—')}</div>
+            </div>
+            <div className="bg-white/10 backdrop-blur-sm rounded-lg p-3">
+              <div className="text-xs opacity-75">Subjects</div>
+              <div className="text-sm font-medium mt-1">{(profile?.subjects && profile.subjects.length > 0) ? profile.subjects.join(', ') : '—'}</div>
             </div>
           </div>
         </div>
         {activeTab === 'homework' ? (
-          <div className="p-6 border-t bg-gray-50">
-            <h3 className="text-lg font-semibold mb-3">Assign Homework</h3>
-          <form onSubmit={handleAssign} className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <div className="p-8 bg-gradient-to-br from-gray-50 to-white">
+            <div className="mb-6">
+              <h3 className="text-2xl font-bold text-gray-800 mb-2">Assign Homework</h3>
+              <p className="text-gray-600">Create and assign homework to your students</p>
+            </div>
+          <form onSubmit={handleAssign} className="bg-white rounded-2xl shadow-lg p-6 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
             <div>
               <label className="text-sm text-gray-600">Class</label>
               {availableClasses ? (
@@ -324,37 +355,46 @@ const TeacherDashboard: React.FC = () => {
               <label className="text-sm text-gray-600">Description</label>
               <textarea value={description} onChange={e => setDescription(e.target.value)} className="w-full mt-1 p-2 border rounded" />
             </div>
-            <div className="md:col-span-3">
-              <button className="bg-blue-600 text-white px-4 py-2 rounded">Assign Homework</button>
-              {message && <div className="text-sm text-green-600 mt-2">{message}</div>}
+            </div>
+            <div className="flex items-center gap-4">
+              <button type="submit" className="bg-gradient-to-r from-blue-600 to-cyan-600 text-white px-8 py-3 rounded-xl font-medium hover:shadow-lg transition-all">Assign Homework</button>
+              {message && <div className="text-sm font-medium text-green-600">{message}</div>}
             </div>
           </form>
 
           {homeworks.length > 0 && (
-            <div className="mt-6">
-              <h4 className="font-semibold">Recent Homeworks</h4>
-              <ul className="mt-2 space-y-2">
+            <div className="mt-8">
+              <h4 className="text-xl font-bold text-gray-800 mb-4">Recent Homeworks</h4>
+              <div className="space-y-3">
                 {homeworks.slice(0, 8).map(hw => (
-                  <li key={hw.id} className="p-3 bg-white border rounded flex justify-between items-start">
-                    <div>
-                      <div className="text-sm text-gray-500">Class {hw.className} • Section {hw.section} • Assigned by {teacherMap[hw.createdBy] || hw.createdBy}</div>
-                      <div className="font-semibold">{hw.title}</div>
-                      <div className="text-sm text-gray-700">{hw.description}</div>
-                      {(hw.submissionDate || hw.dueDate) && <div className="text-xs text-gray-500">Submission: {hw.submissionDate || hw.dueDate}</div>}
-                    </div>
-                    <div>
-                      <button onClick={() => handleDelete(hw.id)} title="Delete" className="p-1 rounded hover:bg-red-50">
+                  <div key={hw.id} className="bg-white border-2 border-gray-100 rounded-xl p-5 hover:shadow-lg transition-all">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <span className="px-3 py-1 bg-blue-100 text-blue-700 text-xs font-medium rounded-full">Class {hw.class_name}</span>
+                          <span className="px-3 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">Section {hw.section}</span>
+                          <span className="px-3 py-1 bg-purple-100 text-purple-700 text-xs font-medium rounded-full">{hw.subject}</span>
+                        </div>
+                        <h5 className="font-bold text-lg text-gray-900 mb-1">{hw.title}</h5>
+                        <p className="text-sm text-gray-600 mb-2">{hw.description}</p>
+                        <div className="flex items-center gap-4 text-xs text-gray-500">
+                          <span>By: {hw.teacher_name || 'Teacher'}</span>
+                          {hw.submission_date && <span>Due: {new Date(hw.submission_date).toLocaleDateString()}</span>}
+                          <span>Posted: {new Date(hw.created_at).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                      <button onClick={() => handleDelete(hw.id)} title="Delete" className="p-2 rounded-lg hover:bg-red-50 transition-colors">
                         <Trash2 className="w-5 h-5 text-red-600" />
                       </button>
                     </div>
-                  </li>
+                  </div>
                 ))}
-              </ul>
+              </div>
             </div>
           )}
         </div>
         ) : (
-          <div className="p-6 border-t bg-gray-50">
+          <div className="p-8 bg-gradient-to-br from-gray-50 to-white">
             <MarksManagement
               userRole="teacher"
               userId={profile?.teacherId || teacher?.teacherId || ''}
@@ -362,6 +402,7 @@ const TeacherDashboard: React.FC = () => {
             />
           </div>
         )}
+      </div>
       </div>
     </div>
   );

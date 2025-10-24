@@ -23,6 +23,8 @@ const StudentDashboard: React.FC = () => {
   const [grades, setGrades] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [latestExamPercentage, setLatestExamPercentage] = useState<number>(0);
+  const [assignmentsCount, setAssignmentsCount] = useState<number>(0);
+  const [examsCount, setExamsCount] = useState<number>(0);
   const [showAIHelper, setShowAIHelper] = useState(false);
   const [showRatingModal, setShowRatingModal] = useState(false);
 
@@ -57,9 +59,27 @@ const StudentDashboard: React.FC = () => {
     try {
       setLoading(true);
 
-      // Load homework for student's class and section
-      const { data: homeworkData } = await fetchHomework(studentData.class_name, studentData.section);
+      // Load homework for student's class and section from database
+      const { data: homeworkData } = await supabase
+        .from('homework')
+        .select('*')
+        .eq('class_name', studentData.class_name)
+        .eq('section', studentData.section)
+        .eq('status', 'active')
+        .order('created_at', { ascending: false });
       setHomework(homeworkData || []);
+
+      // Count assignments from last day (24 hours)
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const { data: recentHomework } = await supabase
+        .from('homework')
+        .select('id')
+        .eq('class_name', studentData.class_name)
+        .eq('section', studentData.section)
+        .eq('status', 'active')
+        .gte('created_at', yesterday.toISOString());
+      setAssignmentsCount(recentHomework?.length || 0);
 
       // Load attendance (if student ID is available)
       if (studentData.id) {
@@ -77,6 +97,15 @@ const StudentDashboard: React.FC = () => {
         if (!percentageError && percentageData !== null) {
           setLatestExamPercentage(percentageData);
         }
+
+        // Count exams with filled results
+        const { data: marksData } = await supabase
+          .from('marks')
+          .select('exam_type')
+          .eq('student_id', studentData.id);
+
+        const uniqueExams = [...new Set(marksData?.map(m => m.exam_type))];
+        setExamsCount(uniqueExams.length);
       }
     } catch (error) {
       console.error('Error loading student data:', error);
@@ -169,7 +198,7 @@ const StudentDashboard: React.FC = () => {
                   </div>
                   <div className="bg-blue-50 px-4 py-2 rounded-xl border border-blue-200">
                     <div className="text-sm text-blue-600 font-medium">Latest Score</div>
-                    <div className="text-2xl font-bold text-blue-700">{latestExamPercentage}</div>
+                    <div className="text-2xl font-bold text-blue-700">{latestExamPercentage}%</div>
                   </div>
                   <div className="bg-purple-50 px-4 py-2 rounded-xl border border-purple-200">
                     <div className="text-sm text-purple-600 font-medium">Status</div>
@@ -252,15 +281,15 @@ const StudentDashboard: React.FC = () => {
                   <div className="text-sm text-gray-600">Attendance</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-blue-600">{latestExamPercentage}</div>
+                  <div className="text-2xl font-bold text-blue-600">{latestExamPercentage}%</div>
                   <div className="text-sm text-gray-600">Latest Score</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-purple-600">{homework.length}</div>
+                  <div className="text-2xl font-bold text-purple-600">{assignmentsCount}</div>
                   <div className="text-sm text-gray-600">Assignments</div>
                 </div>
                 <div className="text-center">
-                  <div className="text-2xl font-bold text-orange-600">{grades.length}</div>
+                  <div className="text-2xl font-bold text-orange-600">{examsCount}</div>
                   <div className="text-sm text-gray-600">Exams</div>
                 </div>
               </div>
